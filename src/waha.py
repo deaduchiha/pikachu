@@ -9,6 +9,7 @@ DEFAULT_WAHA_SESSION = "default"
 PDF_URL_RE = re.compile(r"https?://[^\s)>\"']+\.pdf", re.IGNORECASE)
 IMAGE_MIMETYPES = ("image/jpeg", "image/jpg", "image/png", "image/webp")
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
+MENU_TEXT_KEYWORDS = ("primo", "secondo", "menù", "menu", "mensa", "contorno")
 
 
 class WahaError(Exception):
@@ -59,7 +60,7 @@ async def fetch_channel_messages_preview(
     session: str,
     invite: str,
     api_key: str = "",
-    limit: int = 20,
+    limit: int = 100,
     download_media: bool = True,
 ) -> list:
     base = waha_url.rstrip("/")
@@ -82,52 +83,49 @@ def _is_image_media(mimetype: str, url: str) -> bool:
     return mimetype.startswith("image/") or any(lowered.endswith(ext) for ext in IMAGE_EXTENSIONS)
 
 
+def _menu_asset_from_message(
+    msg: dict,
+    waha_url: str,
+) -> tuple[str, str, str] | None:
+    body = (msg.get("body") or "").strip()
+    media = msg.get("media") or {}
+    media_url = media.get("url") or msg.get("mediaUrl") or ""
+    mimetype = (media.get("mimetype") or "").lower()
+
+    if media_url:
+        full_url = _normalize_waha_media_url(media_url, waha_url)
+        if "pdf" in mimetype or full_url.lower().endswith(".pdf"):
+            title = body or "LAMensa WhatsApp PDF"
+            return full_url, "pdf", title
+        if _is_image_media(mimetype, full_url):
+            title = body or "LAMensa WhatsApp image menu"
+            return full_url, "image", title
+
+    for match in PDF_URL_RE.finditer(body):
+        return match.group(0), "pdf", body[:200] or "LAMensa WhatsApp link"
+
+    if body and any(kw in body.lower() for kw in MENU_TEXT_KEYWORDS):
+        return body, "text", body[:80]
+
+    if media_url and _is_image_media(mimetype, _normalize_waha_media_url(media_url, waha_url)):
+        full_url = _normalize_waha_media_url(media_url, waha_url)
+        return full_url, "image", body or "LAMensa WhatsApp image menu"
+
+    return None
+
+
 def extract_menu_asset(
     messages: list,
     waha_url: str,
 ) -> tuple[str, str, str]:
-    """Return (asset_url, source_kind, title) where kind is pdf, image, or text."""
-
-    pdf_candidate: tuple[str, str, str] | None = None
-    image_candidate: tuple[str, str, str] | None = None
-    text_candidate: tuple[str, str, str] | None = None
+    """Return the menu asset from the newest message that contains one."""
 
     for item in messages:
         msg = item.get("message") if isinstance(item, dict) else None
         if not isinstance(msg, dict):
             continue
-
-        body = (msg.get("body") or "").strip()
-        media = msg.get("media") or {}
-        media_url = media.get("url") or msg.get("mediaUrl") or ""
-        mimetype = (media.get("mimetype") or "").lower()
-
-        if media_url:
-            full_url = _normalize_waha_media_url(media_url, waha_url)
-            if "pdf" in mimetype or full_url.lower().endswith(".pdf"):
-                title = body or "LAMensa WhatsApp PDF"
-                return full_url, "pdf", title
-            if _is_image_media(mimetype, full_url) and image_candidate is None:
-                title = body or "LAMensa WhatsApp image menu"
-                image_candidate = (full_url, "image", title)
-
-        for match in PDF_URL_RE.finditer(body):
-            if pdf_candidate is None:
-                pdf_candidate = (
-                    match.group(0),
-                    "pdf",
-                    body[:200] or "LAMensa WhatsApp link",
-                )
-
-        if body and any(kw in body.lower() for kw in ("primo", "secondo", "menù", "menu", "mensa")):
-            if text_candidate is None:
-                text_candidate = (body, "text", body[:80])
-
-    if pdf_candidate:
-        return pdf_candidate
-    if image_candidate:
-        return image_candidate
-    if text_candidate:
-        return text_candidate
+        asset = _menu_asset_from_message(msg, waha_url)
+        if asset:
+            return asset
 
     raise WahaError("No menu PDF, image, or text found in WhatsApp channel messages.")

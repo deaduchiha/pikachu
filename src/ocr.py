@@ -2,19 +2,32 @@ import asyncio
 import io
 import logging
 
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import pytesseract
 
 logger = logging.getLogger(__name__)
 
+TESSERACT_CONFIG = "--psm 6 --oem 3"
+
 
 def _extract_text_from_image_sync(image_bytes: bytes) -> str:
     image = Image.open(io.BytesIO(image_bytes))
-    if image.mode != "L":
-        image = image.convert("L")
-    image = ImageEnhance.Contrast(image).enhance(1.8)
-    image = image.filter(ImageFilter.SHARPEN)
-    text = pytesseract.image_to_string(image, lang="ita")
+    image = ImageOps.exif_transpose(image)
+    width, height = image.size
+    if max(width, height) < 1800:
+        scale = 1800 / max(width, height)
+        image = image.resize(
+            (int(width * scale), int(height * scale)),
+            Image.Resampling.LANCZOS,
+        )
+
+    gray = image.convert("L") if image.mode != "L" else image
+    gray = ImageEnhance.Contrast(gray).enhance(2.0)
+    gray = gray.filter(ImageFilter.SHARPEN)
+
+    text = pytesseract.image_to_string(gray, lang="ita", config=TESSERACT_CONFIG)
+    if len(text.strip()) < 40:
+        text = pytesseract.image_to_string(gray, lang="ita", config="--psm 4 --oem 3")
     return text.strip()
 
 

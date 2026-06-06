@@ -62,6 +62,194 @@ MONTH_NAMES_EN = [
 
 HTTP_HEADERS = {"user-agent": "TriesteMensaBot/2.0"}
 
+SINGLE_DATE_PATTERNS = [
+    re.compile(
+        r"(?P<weekday>Lunedì|Martedì|Mercoledì|Giovedì|Venerdì|Sabato|Domenica)\s+"
+        r"(?P<day>\d{1,2})\s+(?P<month>[A-Za-zÀ-ú]+)(?:\s+(?P<year>\d{4}))?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?<!\d)(?P<day>\d{1,2})\s+(?P<month>[A-Za-zÀ-ú]+)(?:\s+(?P<year>\d{4}))?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?<!\d)(?P<day>\d{1,2})[/.\-](?P<month>\d{1,2})(?:[/.\-](?P<year>\d{2,4}))?",
+    ),
+]
+
+
+def _resolve_month(name: str) -> int | None:
+    cleaned = re.sub(r"[^a-zà-ú]", "", name.lower())
+    if not cleaned:
+        return None
+    if cleaned in MONTHS_IT:
+        return MONTHS_IT[cleaned]
+    for month_name, month_num in MONTHS_IT.items():
+        if cleaned.startswith(month_name[:4]) or month_name.startswith(cleaned[:4]):
+            return month_num
+    return None
+
+
+def _normalize_menu_text(text: str) -> str:
+    text = text.replace("\x0c", "\n").replace("|", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _parse_single_date(text: str, link_title: str = "") -> date | None:
+    today = rome_today()
+    for source in (text, link_title):
+        if not source:
+            continue
+        for pattern in SINGLE_DATE_PATTERNS:
+            match = pattern.search(source)
+            if not match:
+                continue
+            day_num = int(match.group("day"))
+            month_raw = match.group("month")
+            year_raw = match.groupdict().get("year")
+            if month_raw.isdigit():
+                month = int(month_raw)
+            else:
+                month = _resolve_month(month_raw)
+            if not month or month < 1 or month > 12:
+                continue
+
+            candidate_years: list[int] = []
+            if year_raw:
+                year = int(year_raw)
+                candidate_years = [year + 2000 if year < 100 else year]
+            else:
+                candidate_years = [today.year, today.year - 1, today.year + 1]
+
+            best: date | None = None
+            best_delta = 9999
+            for year in candidate_years:
+                try:
+                    parsed = date(year, month, day_num)
+                except ValueError:
+                    continue
+                delta = abs((today - parsed).days)
+                if delta < best_delta:
+                    best_delta = delta
+                    best = parsed
+            if best and best_delta <= 370:
+                return best
+    return None
+
+
+def _is_label_only_line(line: str, label: str) -> bool:
+    return bool(
+        re.match(
+            rf"(?i)^{label}\s*(?:dello\s+chef|piatto|del\s+chef)?\s*(?:caldo|freddo)?\s*[:\-]?$",
+            line.strip(),
+        )
+    )
+
+
+def _extract_dish_after_label(line: str, label: str) -> str:
+    if _is_label_only_line(line, label):
+        return ""
+
+    inline = re.compile(
+        rf"(?i){label}\s*(?:dello\s+chef|piatto|del\s+chef)?\s*[:\-]\s*(.+)"
+    )
+    match = inline.search(line)
+    if match:
+        return _normalize_cell(match.group(1))
+
+    trailing = re.compile(
+        rf"(?i){label}\s*(?:dello\s+chef|piatto|del\s+chef)?\s+(.+)"
+    )
+    match = trailing.search(line)
+    if match:
+        value = _normalize_cell(match.group(1))
+        if value.upper() not in {"CHEF", "DELLO CHEF", "CALDO", "FREDDO"}:
+            return value
+    return ""
+
+
+def _parse_daily_menu(text: str, link_title: str = "") -> list[dict]:
+    """Parse a single-day menu card (typical of daily WhatsApp image posts)."""
+    day = _parse_single_date(text, link_title) or rome_today()
+    date_label = _date_label(day)
+    meal = "Pranzo"
+    current = {"primo": "", "secondo": "", "contorno": ""}
+
+    def build_row() -> dict | None:
+        if not any(current.values()):
+            return None
+        return {
+            "date": date_label,
+            "date_obj": day,
+            "meal": meal,
+            "primo": current["primo"],
+            "secondo": current["secondo"],
+            "contorno": current["contorno"],
+        }
+
+    rows: list[dict] = []
+    pending_field: str | None = None
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        upper = line.upper()
+        if upper in {"PRANZO", "CENA"}:
+            row = build_row()
+            if row:
+                rows.append(row)
+                current = {"primo": "", "secondo": "", "contorno": ""}
+            meal = "Pranzo" if "PRANZO" in upper else "Cena"
+            pending_field = None
+            continue
+
+        if _parse_single_date(line):
+            row = build_row()
+            if row:
+                rows.append(row)
+                current = {"primo": "", "secondo": "", "contorno": ""}
+            parsed = _parse_single_date(line)
+            if parsed:
+                day = parsed
+                date_label = _date_label(day)
+            pending_field = None
+            continue
+
+        field, values = _parse_row_line(line)
+        if field and values:
+            dish = values[0] if len(values) == 1 else " ".join(values)
+            if dish.upper() not in {"CHEF", "DELLO", "DELLO CHEF", "CALDO"}:
+                current[field] = dish
+            pending_field = None
+            continue
+
+        if "PRIMO" in upper:
+            current["primo"] = _extract_dish_after_label(line, "primo")
+            pending_field = "primo" if not current["primo"] else None
+            continue
+        if "SECONDO" in upper:
+            current["secondo"] = _extract_dish_after_label(line, "secondo")
+            pending_field = "secondo" if not current["secondo"] else None
+            continue
+        if "CONTORNO" in upper or upper.startswith("1 CONTORNO"):
+            current["contorno"] = _extract_dish_after_label(line, "contorno")
+            pending_field = "contorno" if not current["contorno"] else None
+            continue
+
+        if pending_field and not any(
+            token in upper for token in ("PRIMO", "SECONDO", "CONTORNO", "PRANZO", "CENA")
+        ):
+            joined = _normalize_cell(f"{current[pending_field]} {line}".strip())
+            current[pending_field] = joined
+
+    row = build_row()
+    if row:
+        rows.append(row)
+    return rows
+
 
 def _serialize_rows(rows: list[dict]) -> list[dict]:
     serialized = []
@@ -160,7 +348,7 @@ def _parse_date_range(text: str, link_title: str = "") -> tuple[date, date] | No
             end_day = int(match.group(2))
             month_name = match.group(3).lower()
             year = int(match.group(4)) if match.lastindex and match.lastindex >= 4 and match.group(4) else today.year
-            month = MONTHS_IT.get(month_name)
+            month = _resolve_month(month_name)
             if not month:
                 continue
             start = date(year, month, start_day)
@@ -375,23 +563,37 @@ def _parse_vertical_sections(text: str, weekday_dates: dict[str, date]) -> list[
             current_day = f"{day_match.group(1).capitalize()} {int(day_match.group(2))} {day_match.group(3).capitalize()}"
             continue
 
-        if "PRIMO" in upper and "PIATTO" in upper:
-            current["primo"] = re.sub(r"(?i)primo\s*piatto\s*", "", line).strip()
-        elif "SECONDO" in upper and "PIATTO" in upper:
-            current["secondo"] = re.sub(r"(?i)secondo\s*piatto\s*", "", line).strip()
-        elif upper.startswith("CONTORNO"):
-            current["contorno"] = re.sub(r"(?i)contorno\s*", "", line).strip()
+        field, values = _parse_row_line(line)
+        if field and values and current_day:
+            dish = values[0] if len(values) == 1 else " ".join(values)
+            if dish.upper() not in {"CHEF", "DELLO", "DELLO CHEF", "CALDO"}:
+                current[field] = dish
+            continue
+
+        if "PRIMO" in upper:
+            current["primo"] = _extract_dish_after_label(line, "primo")
+        elif "SECONDO" in upper:
+            current["secondo"] = _extract_dish_after_label(line, "secondo")
+        elif "CONTORNO" in upper or upper.startswith("1 CONTORNO"):
+            current["contorno"] = _extract_dish_after_label(line, "contorno")
 
     flush()
     return rows
 
 
 def parse_menu_from_text(text: str, link_title: str = "") -> list[dict]:
+    text = _normalize_menu_text(text)
+    link_title = _normalize_menu_text(link_title)
+
     date_range = _parse_date_range(text, link_title)
     if not date_range:
-        today = rome_today()
-        monday = today - timedelta(days=today.weekday())
-        date_range = (monday, monday + timedelta(days=6))
+        single = _parse_single_date(text, link_title)
+        if single:
+            date_range = (single, single)
+        else:
+            today = rome_today()
+            monday = today - timedelta(days=today.weekday())
+            date_range = (monday, monday + timedelta(days=6))
 
     start, end = date_range
     weekday_dates = _weekday_dates(start, end)
@@ -411,6 +613,9 @@ def parse_menu_from_text(text: str, link_title: str = "") -> list[dict]:
     if not results:
         results = _parse_vertical_sections(text, weekday_dates)
 
+    if not results:
+        results = _parse_daily_menu(text, link_title)
+
     cleaned = []
     seen = set()
     for row in results:
@@ -420,7 +625,11 @@ def parse_menu_from_text(text: str, link_title: str = "") -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        parsed_date = _parse_row_date(row["date"], rome_today())
+        parsed_date = row.get("date_obj")
+        if not isinstance(parsed_date, date):
+            parsed_date = _parse_row_date(row["date"], rome_today())
+        if not isinstance(parsed_date, date):
+            parsed_date = _parse_single_date(row.get("date", ""), link_title)
         cleaned.append({
             "date": row["date"],
             "date_obj": parsed_date,
@@ -444,7 +653,7 @@ def _parse_row_date(row_date: str, today: date) -> date | None:
         return None
 
     day_num = int(match.group(2))
-    month = MONTHS_IT.get(match.group(3).lower())
+    month = _resolve_month(match.group(3))
     if not month:
         return None
 
@@ -464,7 +673,9 @@ def filter_menu(menu: list[dict], mode: str) -> list[dict]:
     for row in menu:
         row_date = row.get("date_obj")
         if not isinstance(row_date, date):
-            row_date = _parse_row_date(row["date"], today)
+            row_date = _parse_row_date(row.get("date", ""), today)
+        if not isinstance(row_date, date):
+            row_date = _parse_single_date(row.get("date", ""))
         if not row_date:
             continue
         if mode == "today" and row_date != today:
