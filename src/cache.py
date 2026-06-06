@@ -25,11 +25,13 @@ class MenuCache:
         cache_dir: str,
         loader_kwargs: dict,
         translate_url: str,
+        translate_api_key: str = "",
         ttl_seconds: int = 1800,
     ) -> None:
         self.cache_dir = Path(cache_dir)
         self.loader_kwargs = loader_kwargs
         self.translate_url = translate_url
+        self.translate_api_key = translate_api_key
         self.ttl_seconds = ttl_seconds
         self._lock = asyncio.Lock()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -103,6 +105,7 @@ class MenuCache:
                 formatted[mode] = await translate_to_english(
                     table,
                     translate_url=self.translate_url,
+                    translate_api_key=self.translate_api_key,
                 )
 
             self._write_json(self.rows_path, _serialize_rows(rows))

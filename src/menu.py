@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import re
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urljoin
@@ -9,6 +10,8 @@ import httpx
 ARDIS_MENU_URL = "https://www.ardis.fvg.it/contenuti.php?id=214&view=page"
 ROME_TZ = timezone(timedelta(hours=2))
 DEFAULT_TRANSLATE_URL = "https://libretranslate.com/translate"
+
+logger = logging.getLogger(__name__)
 
 
 def rome_today() -> date:
@@ -752,27 +755,45 @@ async def translate_to_english(
     text: str,
     source_lang: str = "it",
     translate_url: str = DEFAULT_TRANSLATE_URL,
+    translate_api_key: str = "",
 ) -> str:
     if not translate_url or not text.strip():
         return text
 
-    payload = {
-        "q": text,
-        "source": source_lang,
-        "target": "en",
-        "format": "text",
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(translate_url, json=payload)
-            if response.status_code < 200 or response.status_code >= 300:
-                return text
-            data = response.json()
-            translated = data.get("translatedText")
-            return translated if translated else text
-    except Exception:
+    blocks = [block for block in text.split("\n\n") if block.strip()]
+    if not blocks:
         return text
+
+    translated_blocks: list[str] = []
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for block in blocks:
+            payload: dict[str, str] = {
+                "q": block,
+                "source": source_lang,
+                "target": "en",
+                "format": "text",
+            }
+            if translate_api_key:
+                payload["api_key"] = translate_api_key
+
+            try:
+                response = await client.post(translate_url, json=payload)
+                if response.status_code < 200 or response.status_code >= 300:
+                    logger.warning(
+                        "Translation failed (%s): %s",
+                        response.status_code,
+                        response.text[:200],
+                    )
+                    translated_blocks.append(block)
+                    continue
+                data = response.json()
+                translated = data.get("translatedText")
+                translated_blocks.append(translated if translated else block)
+            except Exception as exc:
+                logger.warning("Translation request error: %s", exc)
+                translated_blocks.append(block)
+
+    return "\n\n".join(translated_blocks)
 
 
 async def load_menu_rows_from_ardis(ardis_url: str) -> tuple[list[dict], str]:
@@ -884,6 +905,7 @@ async def load_menu_rows(
     waha_api_key: str = "",
     ardis_url: str = ARDIS_MENU_URL,
     prefer_waha: bool = True,
+    ardis_fallback: bool = False,
 ) -> tuple[list[dict], str]:
     if prefer_waha and waha_url:
         try:
@@ -893,9 +915,17 @@ async def load_menu_rows(
                 channel_invite=channel_invite,
                 api_key=waha_api_key,
             )
-        except MenuLoadError:
-            if not ardis_url:
+        except MenuLoadError as exc:
+            msg = str(exc).lower()
+            if "401" in msg or "authentication" in msg:
+                raise MenuLoadError(
+                    "WhatsApp channel unavailable: WAHA API key is missing or wrong. "
+                    "Set WAHA_API_KEY in .env (same value for waha and bot), then "
+                    "run: docker compose up -d --build"
+                ) from exc
+            if not ardis_fallback or not ardis_url:
                 raise
+            logger.warning("WAHA failed (%s), falling back to ARDiS", exc)
 
     return await load_menu_rows_from_ardis(ardis_url)
 

@@ -46,6 +46,12 @@ async def fetch_waha_json(
         )
 
     raw = response.text
+    if response.status_code == 401:
+        raise WahaError(
+            "WAHA authentication failed (401). Set WAHA_API_KEY in .env to the same "
+            "value for both waha and bot services, then restart the stack."
+        )
+
     if response.status_code < 200 or response.status_code >= 300:
         raise WahaError(f"WAHA request failed ({response.status_code}): {raw[:300]}")
 

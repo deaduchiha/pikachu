@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       WHATSAPP_DEFAULT_ENGINE: GOWS
-      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env for both waha and bot}
     volumes:
       - waha_sessions:/app/.sessions
     networks:
@@ -25,10 +25,12 @@ services:
       WEBHOOK_PORT: "8080"
       WAHA_URL: http://waha:3000
       WAHA_SESSION: ${WAHA_SESSION:-default}
-      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_API_KEY: ${WAHA_API_KEY:?Set WAHA_API_KEY in .env for both waha and bot}
       WHATSAPP_CHANNEL_INVITE: ${WHATSAPP_CHANNEL_INVITE:-0029Vb5cElw5a23zVecmn70P}
       ARDIS_MENU_URL: ${ARDIS_MENU_URL:-https://www.ardis.fvg.it/contenuti.php?id=214&view=page}
-      TRANSLATE_URL: ${TRANSLATE_URL:-https://libretranslate.com/translate}
+      ARDIS_FALLBACK: ${ARDIS_FALLBACK:-false}
+      TRANSLATE_URL: ${TRANSLATE_URL:-}
+      TRANSLATE_API_KEY: ${TRANSLATE_API_KEY:-}
       CACHE_DIR: /data/cache
       CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-1800}
       REFRESH_INTERVAL_SECONDS: ${REFRESH_INTERVAL_SECONDS:-900}

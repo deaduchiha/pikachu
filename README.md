@@ -53,6 +53,23 @@ Set at minimum:
 
 - `TELEGRAM_BOT_TOKEN` — from [@BotFather](https://t.me/BotFather)
 - `WEBHOOK_HOST` — public URL, e.g. `https://bot.example.com`
+- `WAHA_API_KEY` — shared secret for WAHA + bot (generate with `openssl rand -hex 16`)
+
+```bash
+# Example .env entries
+WAHA_API_KEY=a1b2c3d4e5f6...
+WEBHOOK_HOST=https://shole.nikzad.dev:8443
+ARDIS_FALLBACK=false
+TRANSLATE_URL=
+```
+
+If WAHA returns **401 Unauthorized**, the bot cannot read the WhatsApp channel and will
+not use ARDiS unless you set `ARDIS_FALLBACK=true`. Fix the key, then restart:
+
+```bash
+docker compose up -d --build
+docker compose exec bot rm -f /data/cache/*.json
+```
 
 ### 3. Start WAHA and scan QR
 
