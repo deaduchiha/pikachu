@@ -5,15 +5,17 @@ services:
     environment:
       WHATSAPP_DEFAULT_ENGINE: GOWS
       WAHA_API_KEY: ${WAHA_API_KEY:-}
-      WHATSAPP_API_USERNAME: waha
-      WHATSAPP_API_PASSWORD: waha
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-}
+      WHATSAPP_SWAGGER_USERNAME: ${WHATSAPP_SWAGGER_USERNAME:-admin}
+      WHATSAPP_SWAGGER_PASSWORD: ${WHATSAPP_SWAGGER_PASSWORD:-}
     volumes:
       - waha_sessions:/app/.sessions
     networks:
       - internal
     # Expose only on localhost for initial QR scan; remove in production if using SSH tunnel
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
 
   bot:
     build: .
