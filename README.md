@@ -21,3 +21,7 @@ uv sync
 
 Then point your editor's Python plugin at the `.venv` directory. You should then have working
 autocomplete and type information in your editor.
+
+
+curl "https://api.telegram.org/bot8846852585:AAFkfWv3LxwLHxySL-w898e0eF7EtvPI0Lo/setWebhook" \
+  -d "url=https://pikachu.alireza-nikzdd.workers.dev/webhook"
