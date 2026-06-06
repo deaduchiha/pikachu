@@ -5,6 +5,8 @@ services:
     environment:
       WHATSAPP_DEFAULT_ENGINE: GOWS
       WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WHATSAPP_API_USERNAME: waha
+      WHATSAPP_API_PASSWORD: waha
     volumes:
       - waha_sessions:/app/.sessions
     networks:
