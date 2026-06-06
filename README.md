@@ -47,6 +47,9 @@ cat fullchain.pem privkey.pem > docker/certs/combined.pem
 
 ```bash
 cp .env.example .env
+
+# Generate WAHA API key and append to .env (required for WhatsApp channel)
+grep -q '^WAHA_API_KEY=' .env || echo "WAHA_API_KEY=$(openssl rand -hex 16)" >> .env
 ```
 
 Set at minimum:
