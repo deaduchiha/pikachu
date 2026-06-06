@@ -17,7 +17,10 @@
     "ARDIS_MENU_URL": "https://www.ardis.fvg.it/contenuti.php?id=214&view=page",
     "CITY": "Trieste",
     "MENSA_NAME": "Mensa Centrale Trieste",
-    "TRANSLATE_URL": "https://libretranslate.com/translate"
+    "TRANSLATE_URL": "https://libretranslate.com/translate",
+    "WAHA_URL": "",
+    "WAHA_SESSION": "default",
+    "WHATSAPP_CHANNEL_INVITE": "0029Vb5cElw5a23zVecmn70P"
   }
   /**
 	 * Smart Placement

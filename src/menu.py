@@ -4,9 +4,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
-from js import Headers, Request, fetch as js_fetch
-from pypdf import PdfReader
+import httpx
 
 ARDIS_MENU_URL = "https://www.ardis.fvg.it/contenuti.php?id=214&view=page"
 ROME_TZ = timezone(timedelta(hours=2))
@@ -53,31 +51,68 @@ MONTH_NAMES_IT = [
     "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
 ]
 
+WEEKDAYS_EN = [
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
+]
+
+MONTH_NAMES_EN = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
+
+HTTP_HEADERS = {"user-agent": "TriesteMensaBot/2.0"}
+
+
+def _serialize_rows(rows: list[dict]) -> list[dict]:
+    serialized = []
+    for row in rows:
+        item = dict(row)
+        date_obj = item.pop("date_obj", None)
+        if isinstance(date_obj, date):
+            item["date_iso"] = date_obj.isoformat()
+        serialized.append(item)
+    return serialized
+
+
+def _deserialize_rows(rows: list[dict]) -> list[dict]:
+    restored = []
+    for row in rows:
+        item = dict(row)
+        date_iso = item.pop("date_iso", None)
+        if date_iso:
+            try:
+                item["date_obj"] = date.fromisoformat(date_iso)
+            except ValueError:
+                pass
+        restored.append(item)
+    return restored
+
 
 class MenuLoadError(Exception):
     pass
 
 
 async def fetch_html(url: str) -> str:
-    headers = Headers.new()
-    headers.set("user-agent", "TriesteMensaBot/2.0")
-    req = Request.new(url, headers=headers)
-    resp = await js_fetch(req)
-    return await resp.text()
+    async with httpx.AsyncClient(timeout=60.0, headers=HTTP_HEADERS) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.text
+
+
+async def fetch_bytes(url: str) -> bytes:
+    async with httpx.AsyncClient(timeout=120.0, headers=HTTP_HEADERS) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.content
 
 
 async def fetch_pdf_bytes(url: str) -> bytes:
-    headers = Headers.new()
-    headers.set("user-agent", "TriesteMensaBot/2.0")
-    req = Request.new(url, headers=headers)
-    resp = await js_fetch(req)
-    body = await resp.arrayBuffer()
-    if hasattr(body, "to_py"):
-        body = body.to_py()
-    return bytes(body)
+    return await fetch_bytes(url)
 
 
 def parse_pdf_text(pdf_bytes: bytes) -> str:
+    from pypdf import PdfReader
+
     reader = PdfReader(io.BytesIO(pdf_bytes))
     parts = []
     for page in reader.pages:
@@ -147,6 +182,20 @@ def _weekday_dates(start: date, end: date) -> dict[str, date]:
 
 def _date_label(day: date) -> str:
     return f"{WEEKDAYS[day.weekday()]} {day.day} {MONTH_NAMES_IT[day.month - 1]}"
+
+
+def _date_label_en(day: date) -> str:
+    return f"{WEEKDAYS_EN[day.weekday()]}, {day.day} {MONTH_NAMES_EN[day.month - 1]} {day.year}"
+
+
+def _display_date(row: dict) -> str:
+    date_obj = row.get("date_obj")
+    if isinstance(date_obj, date):
+        return _date_label_en(date_obj)
+    parsed = _parse_row_date(row.get("date", ""), rome_today())
+    if parsed:
+        return _date_label_en(parsed)
+    return row.get("date", "")
 
 
 def _merge_layout_lines(lines: list[str]) -> list[str]:
@@ -371,8 +420,10 @@ def parse_menu_from_text(text: str, link_title: str = "") -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
+        parsed_date = _parse_row_date(row["date"], rome_today())
         cleaned.append({
             "date": row["date"],
+            "date_obj": parsed_date,
             "meal": row["meal"],
             "primo": row.get("primo", ""),
             "secondo": row.get("secondo", ""),
@@ -411,7 +462,9 @@ def filter_menu(menu: list[dict], mode: str) -> list[dict]:
 
     filtered = []
     for row in menu:
-        row_date = _parse_row_date(row["date"], today)
+        row_date = row.get("date_obj")
+        if not isinstance(row_date, date):
+            row_date = _parse_row_date(row["date"], today)
         if not row_date:
             continue
         if mode == "today" and row_date != today:
@@ -439,14 +492,18 @@ def _format_single_table(row: dict) -> str:
     def line(label: str, value: str) -> str:
         return f"│ {_fit_cell(label, label_w)} │ {_fit_cell(value or '-', value_w)} │"
 
+    meal_en = "Lunch" if row.get("meal", "").lower() == "pranzo" else row.get("meal", "")
+    if meal_en.lower() == "cena":
+        meal_en = "Dinner"
+
     return "\n".join([
-        f"📅 {row['date']} — {row['meal']}",
+        f"📅 {_display_date(row)} — {meal_en}",
         top,
-        line("Primo", row.get("primo", "")),
+        line("First course", row.get("primo", "")),
         mid,
-        line("Secondo", row.get("secondo", "")),
+        line("Second course", row.get("secondo", "")),
         mid,
-        line("Contorno", row.get("contorno", "")),
+        line("Side dish", row.get("contorno", "")),
         bottom,
     ])
 
@@ -485,29 +542,29 @@ async def translate_to_english(
     source_lang: str = "it",
     translate_url: str = DEFAULT_TRANSLATE_URL,
 ) -> str:
-    headers = Headers.new()
-    headers.set("content-type", "application/json")
-    body = json.dumps({
+    if not translate_url or not text.strip():
+        return text
+
+    payload = {
         "q": text,
         "source": source_lang,
         "target": "en",
         "format": "text",
-    })
-    req = Request.new(translate_url, method="POST", headers=headers, body=body)
+    }
 
     try:
-        resp = await js_fetch(req)
-        raw = await resp.text()
-        if resp.status < 200 or resp.status >= 300:
-            return text
-        data = json.loads(raw)
-        translated = data.get("translatedText")
-        return translated if translated else text
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(translate_url, json=payload)
+            if response.status_code < 200 or response.status_code >= 300:
+                return text
+            data = response.json()
+            translated = data.get("translatedText")
+            return translated if translated else text
     except Exception:
         return text
 
 
-async def load_menu_rows(ardis_url: str) -> tuple[list[dict], str]:
+async def load_menu_rows_from_ardis(ardis_url: str) -> tuple[list[dict], str]:
     html = await fetch_html(ardis_url)
     links = extract_trieste_menus(html, ardis_url)
     if not links:
@@ -527,6 +584,111 @@ async def load_menu_rows(ardis_url: str) -> tuple[list[dict], str]:
     return rows, pdf_url
 
 
+async def load_menu_rows_from_waha(
+    waha_url: str,
+    session: str,
+    channel_invite: str,
+    api_key: str = "",
+) -> tuple[list[dict], str]:
+    from .waha import WahaError, extract_menu_asset, fetch_channel_messages_preview
+
+    if not waha_url:
+        raise MenuLoadError(
+            "WAHA_URL is not configured. Set it to your WAHA server base URL."
+        )
+
+    try:
+        messages = await fetch_channel_messages_preview(
+            waha_url=waha_url,
+            session=session,
+            invite=channel_invite,
+            api_key=api_key,
+        )
+        asset_url, kind, title = extract_menu_asset(messages, waha_url)
+    except WahaError as exc:
+        raise MenuLoadError(str(exc)) from exc
+
+    if kind == "text":
+        rows = parse_menu_from_text(asset_url, link_title=title)
+        if not rows:
+            raise MenuLoadError("Could not parse menu rows from WhatsApp text.")
+        return rows, "whatsapp:text"
+
+    if kind == "image":
+        from .ocr import extract_text_from_image
+
+        image_bytes = await fetch_bytes(asset_url)
+        text = await extract_text_from_image(image_bytes)
+        if not text:
+            raise MenuLoadError("Could not extract text from the WhatsApp menu image.")
+        rows = parse_menu_from_text(text, link_title=title)
+        if not rows:
+            raise MenuLoadError("Could not parse menu rows from the WhatsApp menu image.")
+        return rows, asset_url
+
+    pdf_bytes = await fetch_pdf_bytes(asset_url)
+    text = parse_pdf_text(pdf_bytes)
+    rows = parse_menu_from_text(text, link_title=title)
+    if not rows:
+        raise MenuLoadError("Could not parse menu rows from the WhatsApp PDF.")
+    return rows, asset_url
+
+
+async def load_channel_message_links(
+    waha_url: str,
+    session: str,
+    channel_invite: str,
+    api_key: str = "",
+) -> list[dict]:
+    from .waha import WahaError, fetch_channel_messages_preview
+
+    messages = await fetch_channel_messages_preview(
+        waha_url=waha_url,
+        session=session,
+        invite=channel_invite,
+        api_key=api_key,
+    )
+    links = []
+    for item in messages:
+        msg = item.get("message") if isinstance(item, dict) else None
+        if not isinstance(msg, dict):
+            continue
+        body = (msg.get("body") or "").strip()
+        media = msg.get("media") or {}
+        media_url = media.get("url") or msg.get("mediaUrl") or ""
+        title = body[:120] if body else "WhatsApp channel post"
+        if media_url:
+            links.append({"title": title, "url": media_url})
+        for match in re.finditer(r"https?://[^\s)>\"']+", body):
+            links.append({"title": title, "url": match.group(0)})
+    if not links:
+        raise MenuLoadError("No links found in WhatsApp channel messages.")
+    return links
+
+
+async def load_menu_rows(
+    waha_url: str = "",
+    waha_session: str = "default",
+    channel_invite: str = "",
+    waha_api_key: str = "",
+    ardis_url: str = ARDIS_MENU_URL,
+    prefer_waha: bool = True,
+) -> tuple[list[dict], str]:
+    if prefer_waha and waha_url:
+        try:
+            return await load_menu_rows_from_waha(
+                waha_url=waha_url,
+                session=waha_session,
+                invite=channel_invite,
+                api_key=waha_api_key,
+            )
+        except MenuLoadError:
+            if not ardis_url:
+                raise
+
+    return await load_menu_rows_from_ardis(ardis_url)
+
+
 def is_trieste_menu_link(title: str, url: str) -> bool:
     text = f"{title} {url}".lower()
 
@@ -538,6 +700,8 @@ def is_trieste_menu_link(title: str, url: str) -> bool:
 
 
 def extract_trieste_menus(html: str, base_url: str) -> list[dict]:
+    from bs4 import BeautifulSoup
+
     soup = BeautifulSoup(html, "html.parser")
     seen = set()
     results = []
@@ -560,16 +724,15 @@ def extract_trieste_menus(html: str, base_url: str) -> list[dict]:
     return results
 
 
-def format_menu_message(links: list[dict]) -> str:
+def format_menu_message(links: list[dict], source: str = "ARDiS") -> str:
     if not links:
         return (
             "⚠️ Could not find Trieste menu files right now.\n\n"
-            "Check manually:\n"
-            "https://www.ardis.fvg.it/contenuti.php?id=214&view=page\n\n"
-            "Look for: Menù settimanali → Mensa centrale Trieste"
+            "Check the LAMensa WhatsApp channel:\n"
+            "https://whatsapp.com/channel/0029Vb5cElw5a23zVecmn70P"
         )
 
-    lines = ["🍽 Mensa Centrale Trieste", "Latest menu files from ARDiS:\n"]
+    lines = [f"🍽 Mensa Centrale Trieste", f"Latest menu files from {source}:\n"]
     for i, item in enumerate(links, 1):
         title = item["title"] or f"Menu file {i}"
         lines.append(f"{i}. {title}\n{item['url']}")
