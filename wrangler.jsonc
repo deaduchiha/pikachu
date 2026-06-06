@@ -18,8 +18,9 @@
     "CITY": "Trieste",
     "MENSA_NAME": "Mensa Centrale Trieste",
     "TRANSLATE_URL": "https://libretranslate.com/translate",
-    "WAHA_URL": "",
-    "WAHA_SESSION": "default",
+    "WPPCONNECT_URL": "",
+    "WPPCONNECT_SESSION": "default",
+    "WHATSAPP_CHANNEL_ID": "",
     "WHATSAPP_CHANNEL_INVITE": "0029Vb5cElw5a23zVecmn70P"
   }
   /**

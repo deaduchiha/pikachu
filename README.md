@@ -1,11 +1,11 @@
 # Trieste Mensa Bot
 
-Telegram bot for **Mensa Centrale Trieste** menus. Reads the weekly menu from the [LAMensa WhatsApp channel](https://whatsapp.com/channel/0029Vb5cElw5a23zVecmn70P) via WAHA, parses PDFs and images (OCR), and replies in English.
+Telegram bot for **Mensa Centrale Trieste** menus. Reads the weekly menu from the [LAMensa WhatsApp channel](https://whatsapp.com/channel/0029Vb5cElw5a23zVecmn70P) via WPPConnect, parses PDFs and images (OCR), and replies in English.
 
 ## Stack
 
 - **aiogram** — Telegram bot (webhook)
-- **WAHA** — WhatsApp channel bridge
+- **WPPConnect Server** — WhatsApp channel bridge
 - **HAProxy** — TLS termination and reverse proxy
 - **Docker Compose** — VPS deployment
 
@@ -26,7 +26,7 @@ uv sync
 cp .env.example .env
 # Edit .env with TELEGRAM_BOT_TOKEN and other values
 
-# Run WAHA separately (Docker) or point WAHA_URL to an existing instance
+# Run WPPConnect separately (Docker) or point WPPCONNECT_URL to an existing instance
 uv run python -m src.main
 ```
 
@@ -48,45 +48,65 @@ cat fullchain.pem privkey.pem > docker/certs/combined.pem
 ```bash
 cp .env.example .env
 
-# Generate WAHA API key and append to .env (required for WhatsApp channel)
-grep -q '^WAHA_API_KEY=' .env || echo "WAHA_API_KEY=$(openssl rand -hex 16)" >> .env
+# Generate WPPConnect secret key and append to .env (required for WhatsApp channel)
+grep -q '^WPPCONNECT_SECRET_KEY=' .env || echo "WPPCONNECT_SECRET_KEY=$(openssl rand -hex 16)" >> .env
 ```
 
 Set at minimum:
 
 - `TELEGRAM_BOT_TOKEN` — from [@BotFather](https://t.me/BotFather)
 - `WEBHOOK_HOST` — public URL, e.g. `https://bot.example.com`
-- `WAHA_API_KEY` — shared secret for WAHA + bot (generate with `openssl rand -hex 16`)
+- `WPPCONNECT_SECRET_KEY` — shared secret for WPPConnect + bot (generate with `openssl rand -hex 16`)
 
 ```bash
 # Example .env entries
-WAHA_API_KEY=a1b2c3d4e5f6...
+WPPCONNECT_SECRET_KEY=a1b2c3d4e5f6...
 WEBHOOK_HOST=https://shole.nikzad.dev:8443
 ARDIS_FALLBACK=false
 TRANSLATE_URL=
 ```
 
-If WAHA returns **401 Unauthorized**, the bot cannot read the WhatsApp channel and will
-not use ARDiS unless you set `ARDIS_FALLBACK=true`. Fix the key, then restart:
+If WPPConnect authentication fails, the bot cannot read the WhatsApp channel and will
+not use ARDiS unless you set `ARDIS_FALLBACK=true`. Fix the secret key, then restart:
 
 ```bash
 docker compose up -d --build
 docker compose exec bot rm -f /data/cache/*.json
 ```
 
-### 3. Start WAHA and scan QR
+### 3. Start WPPConnect and scan QR
 
 ```bash
-docker compose up -d waha
+docker compose up -d wppconnect
 ```
 
-Open `http://127.0.0.1:3000` on the VPS (SSH tunnel or local browser via tunnel):
+Generate a session token and start the session (replace `default` and your secret):
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 user@your-vps
+curl -X POST "http://127.0.0.1:21465/api/default/YOUR_SECRET/generate-token"
+# Use the "full" value from the response as Bearer token below
+
+curl -X POST "http://127.0.0.1:21465/api/default/start-session" \
+  -H "Authorization: Bearer SESSION:TOKEN_FROM_ABOVE"
+```
+
+Open the QR code endpoint on the VPS (SSH tunnel or local browser via tunnel):
+
+```bash
+ssh -L 21465:127.0.0.1:21465 user@your-vps
+# Then open http://127.0.0.1:21465/api/default/qrcode-session with the Bearer header
 ```
 
 Scan the QR code with WhatsApp, then follow the [LAMensa channel](https://whatsapp.com/channel/0029Vb5cElw5a23zVecmn70P).
+
+Find the channel JID for `WHATSAPP_CHANNEL_ID`:
+
+```bash
+curl -H "Authorization: Bearer SESSION:TOKEN" \
+  "http://127.0.0.1:21465/api/default/list-chats" | jq '.response[] | select(.id._serialized | contains("@newsletter"))'
+```
+
+Copy the `@newsletter` JID into `.env` as `WHATSAPP_CHANNEL_ID`. If you only follow LAMensa, you can leave it empty and the bot will auto-detect the single subscribed channel.
 
 ### 4. Start the full stack
 
@@ -114,7 +134,7 @@ Telegram → HAProxy (443) → bot:8080/webhook
                               ↓
                          menu cache (volume)
                               ↓
-                         WAHA → LAMensa WhatsApp channel
+                         WPPConnect → LAMensa WhatsApp channel
                               ↓ (fallback)
                          ARDiS Trieste PDF
 ```
@@ -127,6 +147,6 @@ See [`.env.example`](.env.example) for all options.
 
 ## Notes
 
-- WAHA sessions are stored in the `waha_sessions` Docker volume. Re-scan QR if WhatsApp disconnects.
+- WPPConnect sessions are stored in Docker volumes (`wppconnect_tokens`, `wppconnect_userdata`). Re-scan QR if WhatsApp disconnects.
 - OCR quality depends on image quality; PDF posts are preferred when available.
 - Rotate your Telegram bot token if it was ever committed to git.

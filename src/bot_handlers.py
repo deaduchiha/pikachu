@@ -13,14 +13,14 @@ from .menu import (
     load_channel_message_links,
     split_telegram_messages,
 )
-from .waha import DEFAULT_CHANNEL_INVITE, DEFAULT_WAHA_SESSION
+from .wppconnect import DEFAULT_WPPCONNECT_SESSION
 
 WHATSAPP_CHANNEL_URL = "https://whatsapp.com/channel/0029Vb5cElw5a23zVecmn70P"
 
 HELP_TEXT = (
     "This bot covers Mensa Centrale Trieste only.\n\n"
     "It reads the weekly menu from the LAMensa WhatsApp channel "
-    "(via WAHA), parses PDFs and images, and replies in English.\n\n"
+    "(via WPPConnect), parses PDFs and images, and replies in English.\n\n"
     "Commands:\n"
     "/today — today's menu\n"
     "/week  — this week's menu\n"
@@ -86,16 +86,16 @@ def create_router(settings: Settings, menu_cache: MenuCache) -> Router:
 
     @router.message(Command("links"))
     async def cmd_links(message: Message) -> None:
-        waha_url = loader_kwargs.get("waha_url", "")
-        if waha_url:
+        wppconnect_url = loader_kwargs.get("wppconnect_url", "")
+        if wppconnect_url:
             try:
                 links = await load_channel_message_links(
-                    waha_url=waha_url,
-                    session=loader_kwargs.get("waha_session", DEFAULT_WAHA_SESSION),
-                    channel_invite=loader_kwargs.get(
-                        "channel_invite", DEFAULT_CHANNEL_INVITE
+                    wppconnect_url=wppconnect_url,
+                    session=loader_kwargs.get(
+                        "wppconnect_session", DEFAULT_WPPCONNECT_SESSION
                     ),
-                    api_key=loader_kwargs.get("waha_api_key", ""),
+                    whatsapp_channel_id=loader_kwargs.get("whatsapp_channel_id", ""),
+                    secret_key=loader_kwargs.get("wppconnect_secret_key", ""),
                 )
                 await message.answer(
                     format_menu_message(links, source="LAMensa WhatsApp"),
@@ -109,7 +109,7 @@ def create_router(settings: Settings, menu_cache: MenuCache) -> Router:
                 html, loader_kwargs.get("ardis_url", ARDIS_MENU_URL)
             )
             await message.answer(
-                format_menu_message(links, source="ARDiS (WAHA not configured)"),
+                format_menu_message(links, source="ARDiS (WPPConnect not configured)"),
                 disable_web_page_preview=True,
             )
 

@@ -816,32 +816,37 @@ async def load_menu_rows_from_ardis(ardis_url: str) -> tuple[list[dict], str]:
     return rows, pdf_url
 
 
-async def load_menu_rows_from_waha(
-    waha_url: str,
+async def load_menu_rows_from_whatsapp(
+    wppconnect_url: str,
     session: str,
-    channel_invite: str,
-    api_key: str = "",
+    whatsapp_channel_id: str,
+    secret_key: str = "",
 ) -> tuple[list[dict], str]:
-    from .waha import WahaError, extract_menu_asset, fetch_channel_messages_preview
+    from .wppconnect import (
+        WppConnectError,
+        download_message_media,
+        extract_menu_asset,
+        fetch_channel_messages,
+    )
 
-    if not waha_url:
+    if not wppconnect_url:
         raise MenuLoadError(
-            "WAHA_URL is not configured. Set it to your WAHA server base URL."
+            "WPPCONNECT_URL is not configured. Set it to your WPPConnect server base URL."
         )
 
     try:
-        messages = await fetch_channel_messages_preview(
-            waha_url=waha_url,
+        messages = await fetch_channel_messages(
+            base_url=wppconnect_url,
             session=session,
-            invite=channel_invite,
-            api_key=api_key,
+            channel_id=whatsapp_channel_id,
+            secret_key=secret_key,
         )
-        asset_url, kind, title = extract_menu_asset(messages, waha_url)
-    except WahaError as exc:
+        asset, kind, title = extract_menu_asset(messages)
+    except WppConnectError as exc:
         raise MenuLoadError(str(exc)) from exc
 
     if kind == "text":
-        rows = parse_menu_from_text(asset_url, link_title=title)
+        rows = parse_menu_from_text(asset, link_title=title)
         if not rows:
             raise MenuLoadError("Could not parse menu rows from WhatsApp text.")
         return rows, "whatsapp:text"
@@ -849,48 +854,50 @@ async def load_menu_rows_from_waha(
     if kind == "image":
         from .ocr import extract_text_from_image
 
-        image_bytes = await fetch_bytes(asset_url)
+        image_bytes, _ = await download_message_media(
+            wppconnect_url, session, secret_key, asset
+        )
         text = await extract_text_from_image(image_bytes)
         if not text:
             raise MenuLoadError("Could not extract text from the WhatsApp menu image.")
         rows = parse_menu_from_text(text, link_title=title)
         if not rows:
             raise MenuLoadError("Could not parse menu rows from the WhatsApp menu image.")
-        return rows, asset_url
+        return rows, "whatsapp:image"
 
-    pdf_bytes = await fetch_pdf_bytes(asset_url)
+    if isinstance(asset, str):
+        pdf_bytes = await fetch_pdf_bytes(asset)
+    else:
+        pdf_bytes, _ = await download_message_media(
+            wppconnect_url, session, secret_key, asset
+        )
     text = parse_pdf_text(pdf_bytes)
     rows = parse_menu_from_text(text, link_title=title)
     if not rows:
         raise MenuLoadError("Could not parse menu rows from the WhatsApp PDF.")
-    return rows, asset_url
+    return rows, "whatsapp:pdf"
 
 
 async def load_channel_message_links(
-    waha_url: str,
+    wppconnect_url: str,
     session: str,
-    channel_invite: str,
-    api_key: str = "",
+    whatsapp_channel_id: str,
+    secret_key: str = "",
 ) -> list[dict]:
-    from .waha import WahaError, fetch_channel_messages_preview
+    from .wppconnect import WppConnectError, _message_text, fetch_channel_messages
 
-    messages = await fetch_channel_messages_preview(
-        waha_url=waha_url,
+    messages = await fetch_channel_messages(
+        base_url=wppconnect_url,
         session=session,
-        invite=channel_invite,
-        api_key=api_key,
+        channel_id=whatsapp_channel_id,
+        secret_key=secret_key,
     )
     links = []
-    for item in messages:
-        msg = item.get("message") if isinstance(item, dict) else None
+    for msg in messages:
         if not isinstance(msg, dict):
             continue
-        body = (msg.get("body") or "").strip()
-        media = msg.get("media") or {}
-        media_url = media.get("url") or msg.get("mediaUrl") or ""
+        body = _message_text(msg)
         title = body[:120] if body else "WhatsApp channel post"
-        if media_url:
-            links.append({"title": title, "url": media_url})
         for match in re.finditer(r"https?://[^\s)>\"']+", body):
             links.append({"title": title, "url": match.group(0)})
     if not links:
@@ -899,33 +906,36 @@ async def load_channel_message_links(
 
 
 async def load_menu_rows(
-    waha_url: str = "",
-    waha_session: str = "default",
+    wppconnect_url: str = "",
+    wppconnect_session: str = "default",
+    whatsapp_channel_id: str = "",
     channel_invite: str = "",
-    waha_api_key: str = "",
+    wppconnect_secret_key: str = "",
     ardis_url: str = ARDIS_MENU_URL,
-    prefer_waha: bool = True,
+    prefer_whatsapp: bool = True,
     ardis_fallback: bool = False,
 ) -> tuple[list[dict], str]:
-    if prefer_waha and waha_url:
+    del channel_invite  # kept for API compatibility; invite resolves via channel id
+
+    if prefer_whatsapp and wppconnect_url:
         try:
-            return await load_menu_rows_from_waha(
-                waha_url=waha_url,
-                session=waha_session,
-                channel_invite=channel_invite,
-                api_key=waha_api_key,
+            return await load_menu_rows_from_whatsapp(
+                wppconnect_url=wppconnect_url,
+                session=wppconnect_session,
+                whatsapp_channel_id=whatsapp_channel_id,
+                secret_key=wppconnect_secret_key,
             )
         except MenuLoadError as exc:
             msg = str(exc).lower()
-            if "401" in msg or "authentication" in msg:
+            if "authentication" in msg or "secret_key" in msg:
                 raise MenuLoadError(
-                    "WhatsApp channel unavailable: WAHA API key is missing or wrong. "
-                    "Set WAHA_API_KEY in .env (same value for waha and bot), then "
-                    "run: docker compose up -d --build"
+                    "WhatsApp channel unavailable: WPPConnect secret key is missing or "
+                    "wrong. Set WPPCONNECT_SECRET_KEY in .env (same value for wppconnect "
+                    "and bot), then run: docker compose up -d --build"
                 ) from exc
             if not ardis_fallback or not ardis_url:
                 raise
-            logger.warning("WAHA failed (%s), falling back to ARDiS", exc)
+            logger.warning("WPPConnect failed (%s), falling back to ARDiS", exc)
 
     return await load_menu_rows_from_ardis(ardis_url)
 

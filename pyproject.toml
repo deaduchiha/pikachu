@@ -1,7 +1,7 @@
 [project]
 name = "pikachu"
 version = "0.2.0"
-description = "Trieste Mensa Telegram bot (VPS + aiogram + WAHA)"
+description = "Trieste Mensa Telegram bot (VPS + aiogram + WPPConnect)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

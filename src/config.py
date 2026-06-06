@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 from .menu import ARDIS_MENU_URL, DEFAULT_TRANSLATE_URL
-from .waha import DEFAULT_CHANNEL_INVITE, DEFAULT_WAHA_SESSION
+from .wppconnect import DEFAULT_CHANNEL_INVITE, DEFAULT_WPPCONNECT_SESSION
 
 load_dotenv()
 
@@ -22,9 +22,10 @@ class Settings:
     webhook_host: str
     webhook_path: str
     webhook_port: int
-    waha_url: str
-    waha_session: str
-    waha_api_key: str
+    wppconnect_url: str
+    wppconnect_session: str
+    wppconnect_secret_key: str
+    whatsapp_channel_id: str
     whatsapp_channel_invite: str
     ardis_menu_url: str
     ardis_fallback: bool
@@ -40,7 +41,9 @@ class Settings:
         if not token:
             raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
 
-        waha_url = os.getenv("WAHA_URL", "http://waha:3000").strip().rstrip("/")
+        wppconnect_url = os.getenv(
+            "WPPCONNECT_URL", "http://wppconnect:21465"
+        ).strip().rstrip("/")
         translate_url = os.getenv("TRANSLATE_URL", DEFAULT_TRANSLATE_URL).strip()
 
         return cls(
@@ -48,9 +51,12 @@ class Settings:
             webhook_host=os.getenv("WEBHOOK_HOST", "").strip().rstrip("/"),
             webhook_path=os.getenv("WEBHOOK_PATH", "/webhook").strip() or "/webhook",
             webhook_port=int(os.getenv("WEBHOOK_PORT", "8080")),
-            waha_url=waha_url,
-            waha_session=os.getenv("WAHA_SESSION", DEFAULT_WAHA_SESSION).strip(),
-            waha_api_key=os.getenv("WAHA_API_KEY", "").strip(),
+            wppconnect_url=wppconnect_url,
+            wppconnect_session=os.getenv(
+                "WPPCONNECT_SESSION", DEFAULT_WPPCONNECT_SESSION
+            ).strip(),
+            wppconnect_secret_key=os.getenv("WPPCONNECT_SECRET_KEY", "").strip(),
+            whatsapp_channel_id=os.getenv("WHATSAPP_CHANNEL_ID", "").strip(),
             whatsapp_channel_invite=os.getenv(
                 "WHATSAPP_CHANNEL_INVITE", DEFAULT_CHANNEL_INVITE
             ).strip(),
@@ -71,11 +77,12 @@ class Settings:
 
     def menu_loader_kwargs(self) -> dict:
         return {
-            "waha_url": self.waha_url,
-            "waha_session": self.waha_session,
+            "wppconnect_url": self.wppconnect_url,
+            "wppconnect_session": self.wppconnect_session,
+            "wppconnect_secret_key": self.wppconnect_secret_key,
+            "whatsapp_channel_id": self.whatsapp_channel_id,
             "channel_invite": self.whatsapp_channel_invite,
-            "waha_api_key": self.waha_api_key,
             "ardis_url": self.ardis_menu_url,
-            "prefer_waha": bool(self.waha_url),
+            "prefer_whatsapp": bool(self.wppconnect_url),
             "ardis_fallback": self.ardis_fallback,
         }

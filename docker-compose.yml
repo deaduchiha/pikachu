@@ -1,35 +1,35 @@
 services:
-  waha:
-    image: devlikeapro/waha:latest
+  wppconnect:
+    image: ibsddev/wppconnect-server:latest
     restart: unless-stopped
     environment:
-      WHATSAPP_DEFAULT_ENGINE: WEBJS
-      WAHA_API_KEY: ${WAHA_API_KEY:-}
-      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
-      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-}
-      WHATSAPP_SWAGGER_USERNAME: ${WHATSAPP_SWAGGER_USERNAME:-admin}
-      WHATSAPP_SWAGGER_PASSWORD: ${WHATSAPP_SWAGGER_PASSWORD:-}
+      PORT: "21465"
+      WPP_SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-}
+      WPP_START_ALL_SESSION: "true"
+      WPP_TOKEN_STORE_TYPE: file
     volumes:
-      - waha_sessions:/app/.sessions
+      - wppconnect_tokens:/usr/src/wpp-server/tokens
+      - wppconnect_userdata:/usr/src/wpp-server/userDataDir
     networks:
       - internal
     # Expose only on localhost for initial QR scan; remove in production if using SSH tunnel
     ports:
-      - "3000:3000"
+      - "21465:21465"
 
   bot:
     build: .
     restart: unless-stopped
     depends_on:
-      - waha
+      - wppconnect
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       WEBHOOK_HOST: ${WEBHOOK_HOST}
       WEBHOOK_PATH: ${WEBHOOK_PATH:-/webhook}
       WEBHOOK_PORT: "8080"
-      WAHA_URL: http://waha:3000
-      WAHA_SESSION: ${WAHA_SESSION:-default}
-      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WPPCONNECT_URL: http://wppconnect:21465
+      WPPCONNECT_SESSION: ${WPPCONNECT_SESSION:-default}
+      WPPCONNECT_SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-}
+      WHATSAPP_CHANNEL_ID: ${WHATSAPP_CHANNEL_ID:-}
       WHATSAPP_CHANNEL_INVITE: ${WHATSAPP_CHANNEL_INVITE:-0029Vb5cElw5a23zVecmn70P}
       ARDIS_MENU_URL: ${ARDIS_MENU_URL:-https://www.ardis.fvg.it/contenuti.php?id=214&view=page}
       ARDIS_FALLBACK: ${ARDIS_FALLBACK:-false}
@@ -47,7 +47,8 @@ services:
       - "8080:8080"
 
 volumes:
-  waha_sessions:
+  wppconnect_tokens:
+  wppconnect_userdata:
   menu_cache:
 
 networks:
