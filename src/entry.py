@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.methods import SetWebhook
 from aiogram.types import Update
 from bot_handlers import router
-from menu import ARDIS_MENU_URL
+from menu import ARDIS_MENU_URL, DEFAULT_TRANSLATE_URL
 from worker_session import WorkersFetchSession
 from workers import WorkerEntrypoint, Response
 
@@ -76,7 +76,15 @@ class Default(WorkerEntrypoint):
                     context={"bot": bot},
                 )
                 ardis_url = getattr(self.env, "ARDIS_MENU_URL", ARDIS_MENU_URL)
-                await dispatcher.feed_update(bot, update, ardis_url=ardis_url)
+                translate_url = getattr(
+                    self.env, "TRANSLATE_URL", DEFAULT_TRANSLATE_URL
+                )
+                await dispatcher.feed_update(
+                    bot,
+                    update,
+                    ardis_url=ardis_url,
+                    translate_url=translate_url,
+                )
                 return json_response({"ok": True})
             except TelegramAPIError as e:
                 return json_response({"ok": True, "telegram_error": str(e)})
