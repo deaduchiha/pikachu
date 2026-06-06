@@ -1,52 +1,86 @@
 import json
-import os
-from fastapi import FastAPI, Request, Response
-from workers import WorkerEntrypoint
-import asgi
-import httpx
 
-app = FastAPI()
-
-TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
-
-
-async def send_message(token: str, chat_id: int, text: str):
-    url = TELEGRAM_API.format(token=token, method="sendMessage")
-    async with httpx.AsyncClient() as client:
-        await client.post(url, json={"chat_id": chat_id, "text": text})
+from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramAPIError
+from aiogram.methods import SetWebhook
+from aiogram.types import Update
+from bot_handlers import router
+from menu import ARDIS_MENU_URL
+from worker_session import WorkersFetchSession
+from workers import WorkerEntrypoint, Response
 
 
-@app.post("/webhook")
-async def webhook(request: Request):
-    token = request.app.state.bot_token
-    body = await request.json()
-
-    message = body.get("message", {})
-    chat_id = message.get("chat", {}).get("id")
-    text = message.get("text", "")
-
-    if not chat_id:
-        return Response("ok")
-
-    # Handle commands
-    if text == "/start":
-        await send_message(token, chat_id, "👋 Hello! I'm your bot. Send me anything!")
-    elif text == "/help":
-        await send_message(token, chat_id, "Commands:\n/start - Welcome\n/help - This menu")
-    else:
-        # Echo back
-        await send_message(token, chat_id, f"You said: {text}")
-
-    return Response("ok")
+def json_response(data, status=200):
+    return Response(
+        json.dumps(data, ensure_ascii=False),
+        status=status,
+        headers={"content-type": "application/json; charset=utf-8"},
+    )
 
 
-@app.get("/")
-async def health():
-    return {"status": "running"}
+def text_response(text, status=200):
+    return Response(
+        text,
+        status=status,
+        headers={"content-type": "text/plain; charset=utf-8"},
+    )
+
+
+dispatcher = Dispatcher()
+dispatcher.include_router(router)
+
+
+def create_bot(token: str) -> Bot:
+    return Bot(token=token, session=WorkersFetchSession())
 
 
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
-        # Inject secrets into app state
-        app.state.bot_token = self.env.BOT_TOKEN
-        return await asgi.fetch(app, request.js_object, self.env)
+        url = str(request.url)
+        method = str(request.method)
+
+        if method == "GET" and "setWebhook" in url:
+            bot = create_bot(self.env.TELEGRAM_BOT_TOKEN)
+            base = url.split("setWebhook")[0].rstrip("/?")
+            webhook_url = base + "/webhook"
+
+            result = await bot(
+                SetWebhook(
+                    url=webhook_url,
+                    drop_pending_updates=True,
+                    allowed_updates=["message"],
+                )
+            )
+
+            return json_response({
+                "ok": True,
+                "webhook_url": webhook_url,
+                "telegram_result": result.model_dump(),
+            })
+
+        if method == "GET" and "health" in url:
+            return text_response("OK")
+
+        if method == "GET":
+            return text_response(
+                "Trieste Mensa Bot is running.\n\n"
+                "After deployment, open once:\n"
+                "https://<your-worker>.workers.dev/setWebhook"
+            )
+
+        if method == "POST":
+            try:
+                bot = create_bot(self.env.TELEGRAM_BOT_TOKEN)
+                update = Update.model_validate(
+                    await request.json(),
+                    context={"bot": bot},
+                )
+                ardis_url = getattr(self.env, "ARDIS_MENU_URL", ARDIS_MENU_URL)
+                await dispatcher.feed_update(bot, update, ardis_url=ardis_url)
+                return json_response({"ok": True})
+            except TelegramAPIError as e:
+                return json_response({"ok": True, "telegram_error": str(e)})
+            except Exception as e:
+                return json_response({"ok": False, "error": str(e)}, status=500)
+
+        return text_response("Method not allowed", status=405)
