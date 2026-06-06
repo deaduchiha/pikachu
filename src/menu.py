@@ -679,7 +679,7 @@ async def load_menu_rows(
             return await load_menu_rows_from_waha(
                 waha_url=waha_url,
                 session=waha_session,
-                invite=channel_invite,
+                channel_invite=channel_invite,
                 api_key=waha_api_key,
             )
         except MenuLoadError:
