@@ -37,20 +37,8 @@ services:
     networks:
       - internal
       - edge
-
-  haproxy:
-    image: haproxy:2.9-alpine
-    restart: unless-stopped
-    depends_on:
-      - bot
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./docker/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-      - ./docker/certs:/etc/ssl/certs:ro
-    networks:
-      - edge
+      - "8080:8080"
 
 volumes:
   waha_sessions:
